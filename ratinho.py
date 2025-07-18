@@ -1,190 +1,135 @@
 import streamlit as st
-from datetime import datetime
-import pandas as pd
+from collections import Counter
 
-# Configuração da página
-st.set_page_config(page_title="FS Pattern Master v1 – AI Estratégica 30x", layout="centered")
-st.title("⚡ FS Pattern Master v1 – AI Estratégica 30x")
+# Função para normalizar uma sequência trocando 🔴 e 🔵 para um padrão genérico,
+# mantendo empates 🟡 fixos. Isso ajuda a identificar padrões que são a mesma estrutura
+def normalizar_seq(seq):
+    # Mapear cores para 0 e 1 (ex: 🔴=0, 🔵=1), empates fixos (2)
+    # para poder comparar inversões
+    mapping = {'🔴': 0, '🔵': 1, '🟡': 2}
+    normal = [mapping[c] for c in seq]
 
-# Inicialização do estado
-if "historico" not in st.session_state:
-    st.session_state.historico = []
-if "green" not in st.session_state:
-    st.session_state.green = 0
-if "red" not in st.session_state:
-    st.session_state.red = 0
-if "modo_g1" not in st.session_state:
-    st.session_state.modo_g1 = False
-if "ultima_sugestao" not in st.session_state:
-    st.session_state.ultima_sugestao = None
+    # Também criar inverso (troca 0<->1, 2 fica igual)
+    inverso = [1 - x if x in (0,1) else x for x in normal]
 
-# Funções auxiliares
+    return normal, inverso
 
-def detectar_horario_de_risco():
-    agora = datetime.now()
-    dia = agora.weekday()  # segunda=0, domingo=6
-    hora = agora.hour
-    # Quinta feira 18h em diante, sexta, sabado e domingo todo dia
-    return (dia == 3 and hora >= 18) or (dia in [4,5,6])
+# Função para verificar se duas sequências são iguais
+# considerando normal e inverso
+def seq_igual(seq1, seq2):
+    n1, i1 = normalizar_seq(seq1)
+    n2, i2 = normalizar_seq(seq2)
+    return n1 == n2 or n1 == i2
 
-def inverter_cor(c):
-    return {'R':'B','B':'R','T':'T'}.get(c, c)
+# Função para buscar subpadrões repetidos no histórico
+def buscar_subpadroes(historico, min_len=3, max_len=9):
+    n = len(historico)
+    achados = []
 
-def verificar_reescrita(col_atual, col_ref):
-    # Verifica se col_atual == col_ref ou col_atual invertida == col_ref
-    if col_atual == col_ref:
-        return True
-    invertida = [inverter_cor(c) for c in col_atual]
-    if invertida == col_ref:
-        return True
-    return False
-
-def extrair_linhas(hist):
-    # Preenche com ' ' se menos de 27
-    hist = ([' '] * (27 - len(hist))) + hist[-27:]
-    linha1 = hist[0:9]
-    linha2 = hist[9:18]
-    linha3 = hist[18:27]
-    return [linha1, linha2, linha3]
-
-def gerar_colunas(linhas):
-    colunas = []
-    for i in range(9):
-        colunas.append([linhas[0][i], linhas[1][i], linhas[2][i]])
-    return colunas
-
-# 14 padrões básicos - exemplo simplificado (você pode expandir!)
-def padroes_basicos(hist):
-    ultimos = hist[-9:]
-    padrao = ''.join(ultimos[-3:])
-    if padrao == 'RRR':
-        return 'R', "Padrão básico: sequência de 3 Reds"
-    if padrao == 'BBB':
-        return 'B', "Padrão básico: sequência de 3 Blues"
-    if padrao == 'RBR':
-        return 'R', "Padrão básico: padrão alternado RBR"
-    if padrao == 'BRB':
-        return 'B', "Padrão básico: padrão alternado BRB"
-    return None, None
-
-# 16 padrões avançados - exemplo simplificado (expanda conforme necessidade)
-def padroes_avancados(hist):
-    if len(hist) < 9:
-        return None, None
-    ultimos = hist[-9:]
-    # Padrão 1: 2 Reds e 1 Blue intercalados
-    count_r = ultimos.count('R')
-    count_b = ultimos.count('B')
-    if count_r == 6 and count_b == 3:
-        return 'R', "Padrão avançado: predominância Reds com Blues intercalados"
-    # Padrão 2: alternância forte (nenhuma repetição de 2)
-    for i in range(len(ultimos)-1):
-        if ultimos[i] == ultimos[i+1]:
+    for tamanho in range(max_len, min_len-1, -1):
+        if tamanho > n:
+            continue
+        # Criar todas as subsequências desse tamanho
+        subseqs = []
+        for start in range(n - tamanho +1):
+            subseq = historico[start:start+tamanho]
+            subseqs.append( (start, subseq) )
+        # Comparar todas entre si para ver repetições
+        for i in range(len(subseqs)):
+            start_i, seq_i = subseqs[i]
+            for j in range(i+1, len(subseqs)):
+                start_j, seq_j = subseqs[j]
+                if seq_igual(seq_i, seq_j):
+                    achados.append({
+                        'tamanho': tamanho,
+                        'pos1': start_i,
+                        'seq1': seq_i,
+                        'pos2': start_j,
+                        'seq2': seq_j
+                    })
+        if achados:
             break
-    else:
-        # Se não quebrou, alternância pura
-        return ultimos[-1], "Padrão avançado: alternância forte detectada"
-    return None, None
+    return achados
 
-def detectar_padrao_completo(hist):
-    cor, motivo = padroes_basicos(hist)
-    if cor:
-        return cor, motivo
-    cor2, motivo2 = padroes_avancados(hist)
-    if cor2:
-        return cor2, motivo2
-    return None, None
+# Função para prever próxima jogada com base no padrão encontrado
+def prever_proxima(historico, padrao):
+    """
+    padrao = dict com keys: tamanho, pos1, seq1, pos2, seq2
+    A ideia é: 
+    - A sequência mais recente é a seq1 em pos1
+    - Ver a jogada seguinte após seq2 em pos2 (se existir)
+    """
+    pos2 = padrao['pos2']
+    tamanho = padrao['tamanho']
+    historico_len = len(historico)
 
-def detectar_reescrita_estrutural(hist):
-    if len(hist) < 27:
-        return None, "Histórico insuficiente para análise estrutural"
-    linhas = extrair_linhas(hist)
-    colunas = gerar_colunas(linhas)
-    referencia = colunas[-4]  # 4 colunas atrás
-    atual = colunas[-1]
-    if verificar_reescrita(atual, referencia):
-        cor = atual[-1]
-        return cor, "Reescrita estrutural detectada, padrão repetido"
-    return None, None
+    prox_pos = pos2 + tamanho
+    if prox_pos >= historico_len:
+        return None  # Não há próxima jogada conhecida
 
-def gerar_sugestao(hist):
-    if detectar_horario_de_risco():
-        return None, "⛔ Horário de alto risco. Sugestão bloqueada."
+    jogada_apos = historico[prox_pos]
 
-    cor, motivo = detectar_reescrita_estrutural(hist)
-    if cor:
-        return cor, motivo
+    # Agora é importante saber se a sequência seq1 foi invertida em relação a seq2,
+    # para inverter a jogada_apos também.
 
-    cor2, motivo2 = detectar_padrao_completo(hist)
-    if cor2:
-        return cor2, motivo2
+    n1, i1 = normalizar_seq(padrao['seq1'])
+    n2, i2 = normalizar_seq(padrao['seq2'])
 
-    return None, "Nenhum padrão confiável detectado"
+    # Se seq1 é inverso de seq2, inverter jogada_apos
+    if n1 == i2:
+        # inverter jogada_apos: 🔴 <-> 🔵, 🟡 fica igual
+        if jogada_apos == '🔴':
+            jogada_apos = '🔵'
+        elif jogada_apos == '🔵':
+            jogada_apos = '🔴'
 
-# --- INTERFACE ---
+    return jogada_apos
 
-st.subheader("🎮 Inserir Resultado")
-col1, col2, col3 = st.columns(3)
-with col1:
-    if st.button("🔴 Red"):
-        st.session_state.historico.append('R')
-        st.session_state.modo_g1 = False
-with col2:
-    if st.button("🔵 Blue"):
-        st.session_state.historico.append('B')
-        st.session_state.modo_g1 = False
-with col3:
-    if st.button("🟡 Tie"):
-        st.session_state.historico.append('T')
-        st.session_state.modo_g1 = False
+# Função principal que roda análise e previsão
+def analisar_historico(historico):
+    achados = buscar_subpadroes(historico)
+    if not achados:
+        return None, "Nenhum padrão repetido detectado."
 
-st.subheader("📜 Histórico (formato oficial do jogo)")
-linhas = extrair_linhas(st.session_state.historico)
-for idx, linha in enumerate(linhas):
-    st.write(f"Linha {idx+1}:", " ".join(linha))
+    # Pegar o melhor padrão (maior tamanho)
+    melhor = max(achados, key=lambda x: x['tamanho'])
+    prox_jogada = prever_proxima(historico, melhor)
 
-st.subheader("🎯 Sugestão Inteligente")
-if not st.session_state.modo_g1:
-    sugestao, motivo = gerar_sugestao(st.session_state.historico)
-    st.session_state.ultima_sugestao = sugestao
-    if sugestao:
-        cor_map = {'R': "🔴 Red", 'B': "🔵 Blue", 'T': "🟡 Tie"}
-        st.success(f"Sugestão: {cor_map[sugestao]}")
-        st.info(motivo)
-    else:
-        st.warning(motivo)
-else:
-    st.info("🔁 Modo G1 ativo: repita a última sugestão.")
+    if prox_jogada is None:
+        return None, "Padrão encontrado, mas não foi possível prever próxima jogada (limite histórico)."
 
-st.subheader("📊 Painel de Desempenho")
-colg, colr = st.columns(2)
-with colg:
-    if st.button("✅ GREEN"):
-        st.session_state.green += 1
-        st.session_state.modo_g1 = False
-with colr:
-    if st.button("❌ RED"):
-        # Se modo_g1 ligado, desliga mas não conta erro, senão conta
-        if st.session_state.modo_g1:
-            st.session_state.modo_g1 = False
+    texto = (f"Padrão detectado: sequência de tamanho {melhor['tamanho']} "
+             f"repetida nas posições {melhor['pos1']+1} e {melhor['pos2']+1}.\n"
+             f"Sugestão baseada na repetição estrutural com possível inversão.")
+    return prox_jogada, texto
+
+# ---------------- STREAMLIT ------------------
+
+def main():
+    st.title("FS Pattern Auto-ID & Prediction")
+
+    st.write("Informe o histórico (máximo 27) na ordem correta: mais recente à esquerda.")
+    st.write("Use os emojis 🔴 🔵 🟡 separados por espaço.")
+
+    raw = st.text_input("Histórico:", "")
+
+    if raw:
+        historico = raw.strip().split()
+        if len(historico) < 9:
+            st.warning("Histórico deve conter pelo menos 9 resultados.")
+            return
+        if len(historico) > 27:
+            historico = historico[:27]
+
+        st.write("### Histórico (mais recente → mais antigo):")
+        st.write(" ".join(historico))
+
+        jogada, justificativa = analisar_historico(historico)
+        if jogada is None:
+            st.info(justificativa)
         else:
-            st.session_state.red += 1
-        st.session_state.modo_g1 = True
+            st.markdown(f"### Próxima jogada prevista: {jogada}")
+            st.info(justificativa)
 
-st.metric("Total de GREEN", st.session_state.green)
-st.metric("Total de RED", st.session_state.red)
-
-st.subheader("🧾 Exportar Histórico")
-if st.button("📥 Exportar histórico CSV"):
-    df = pd.DataFrame(st.session_state.historico, columns=["Resultado"])
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button(label="Download CSV", data=csv, file_name="historico_fs_pattern_master.csv", mime='text/csv')
-
-st.subheader("🧹 Resetar Tudo")
-if st.button("🔄 Resetar Sistema"):
-    st.session_state.historico = []
-    st.session_state.green = 0
-    st.session_state.red = 0
-    st.session_state.modo_g1 = False
-    st.session_state.ultima_sugestao = None
-    st.success("Sistema resetado.")
+if __name__ == "__main__":
+    main()
