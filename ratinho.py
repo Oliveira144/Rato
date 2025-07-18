@@ -1,42 +1,67 @@
-import streamlit as st from collections import deque, Counter import random
+import streamlit as st
+from collections import defaultdict
 
-Inicialização do histórico
+# Configuração da interface
+st.set_page_config(page_title="FS AutoTracker", layout="wide")
 
-if 'historico' not in st.session_state: st.session_state.historico = deque(maxlen=27)
+st.title("🔮 Football Studio – Previsão Pós-Padrão (Auto Aprendizagem)")
 
-st.title("FS Auto Predictor – AI de Reescrita")
+# Inicialização de variáveis na sessão
+if "historico" not in st.session_state:
+    st.session_state.historico = []
 
-cores = ["🔴", "🔵", "🟡"]
+if "ocorrencias" not in st.session_state:
+    st.session_state.ocorrencias = defaultdict(lambda: defaultdict(int))
 
-Função de sugestão baseada em repetição simples de sequência
+# Função para atualizar a base de dados de sequências
+def registrar_sequencia(historico):
+    if len(historico) < 5:
+        return
+    padrao = tuple(historico[1:5])  # os 4 anteriores
+    proximo = historico[0]          # o mais recente
+    st.session_state.ocorrencias[padrao][proximo] += 1
 
-def sugerir_proxima_jogada(historico): if len(historico) < 9: return "Aguardando mais resultados...", None
+# Função para gerar sugestão com base em sequências anteriores
+def sugerir_proxima(historico):
+    if len(historico) < 4:
+        return None, 0.0
+    padrao = tuple(historico[:4])
+    if padrao not in st.session_state.ocorrencias:
+        return None, 0.0
+    futuros = st.session_state.ocorrencias[padrao]
+    sugestao = max(futuros, key=futuros.get)
+    total = sum(futuros.values())
+    confianca = futuros[sugestao] / total
+    return sugestao, confianca
 
-ultimos_9 = list(historico)[-9:]
-melhor_match = 0
-melhor_cor = None
-for i in range(len(historico) - 9):
-    bloco = list(historico)[i:i+9]
-    match = sum([1 for a, b in zip(bloco, ultimos_9) if a == b])
-    if match > melhor_match:
-        melhor_match = match
-        if i + 9 < len(historico):
-            melhor_cor = historico[i + 9]
+# Botões de inserção de resultado
+col1, col2, col3 = st.columns(3)
+with col1:
+    if st.button("🔴 RED"):
+        st.session_state.historico.insert(0, "🔴")
+        registrar_sequencia(st.session_state.historico)
+with col2:
+    if st.button("🔵 BLUE"):
+        st.session_state.historico.insert(0, "🔵")
+        registrar_sequencia(st.session_state.historico)
+with col3:
+    if st.button("🟡 TIE"):
+        st.session_state.historico.insert(0, "🟡")
+        registrar_sequencia(st.session_state.historico)
 
-if melhor_cor:
-    return melhor_cor, melhor_match / 9
+# Mostrar histórico atual (mais recente à esquerda)
+st.subheader("📊 Histórico (mais recente à esquerda)")
+st.markdown(" ".join(st.session_state.historico[:27]))
+
+# Exibir sugestão baseada no que já ocorreu antes
+sugestao, confianca = sugerir_proxima(st.session_state.historico)
+if sugestao:
+    st.success(f"🎯 Sugestão: **{sugestao}** com confiança de **{confianca:.2%}**")
 else:
-    return random.choice(cores), 0.0
+    st.info("⚠️ Sem dados suficientes para sugestão ainda.")
 
-Exibe o histórico no painel (esquerda para direita, mais recente à esquerda)
-
-historico_formatado = list(st.session_state.historico)[::-1] st.markdown("## Histórico") st.write(" ".join(historico_formatado))
-
-Botões de entrada
-
-st.markdown("### Inserir novo resultado") col1, col2, col3 = st.columns(3) with col1: if st.button("🔴 Red"): st.session_state.historico.append("🔴") st.experimental_rerun() with col2: if st.button("🔵 Blue"): st.session_state.historico.append("🔵") st.experimental_rerun() with col3: if st.button("🟡 Yellow"): st.session_state.historico.append("🟡") st.experimental_rerun()
-
-Sugestão automática
-
-if len(st.session_state.historico) >= 9: suggestion, confidence = sugerir_proxima_jogada(st.session_state.historico) st.markdown("### Sugestão Automática") st.success( f"A próxima jogada sugerida é: {suggestion} com confiança de {round(confidence*100, 2)}%." ) else: st.warning("Insira pelo menos 9 resultados para iniciar a previsão.")
-
+# Botão para limpar histórico (opcional)
+if st.button("🧹 Limpar Histórico"):
+    st.session_state.historico.clear()
+    st.session_state.ocorrencias.clear()
+    st.success("Histórico e dados limpos.")
