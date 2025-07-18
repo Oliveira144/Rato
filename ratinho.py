@@ -28,7 +28,6 @@ def buscar_subpadroes(historico, min_len=3, max_len=9):
             subseq = historico[start:start+tamanho]
             subseqs.append( (start, subseq) )
 
-        # Dicionário para contar repetições normalizadas
         rep_contagem = defaultdict(list)
 
         for idx, (start_pos, seq) in enumerate(subseqs):
@@ -36,10 +35,8 @@ def buscar_subpadroes(historico, min_len=3, max_len=9):
             key = tuple(nseq)
             rep_contagem[key].append((start_pos, seq))
 
-        # Agora verificar quais chaves tem pelo menos 2 ocorrências para achar repetições
         for key, ocor in rep_contagem.items():
             if len(ocor) >= 2:
-                # Para cada par de ocorrências, armazenar no achados
                 for i in range(len(ocor)):
                     for j in range(i+1, len(ocor)):
                         achados.append({
@@ -72,7 +69,6 @@ def prever_proxima(historico, padrao):
     n2, i2 = normalizar_seq(padrao['seq2'])
 
     if n1 == i2:
-        # inverter jogada_apos
         if jogada_apos == '🔴':
             jogada_apos = '🔵'
         elif jogada_apos == '🔵':
@@ -83,18 +79,12 @@ def prever_proxima(historico, padrao):
 # ---------- Sistema Anti-Manipulação ----------
 
 def detectar_manipulacao(historico):
-    """
-    Detecta ciclos típicos de manipulação:
-    Exemplo: sequências 🔴🔴🟡🔵 repetidas ou padrões com empates travando viradas.
-    """
     manipulos = []
     n = len(historico)
     for i in range(n-4):
         seq = historico[i:i+4]
-        # Detecta padrão bloqueio vermelho
         if seq == ['🔴','🔴','🟡','🔵']:
             manipulos.append(i)
-        # Pode adicionar outras regras conforme necessidade
     return manipulos
 
 # ---------- Análise final com ranking ----------
@@ -106,7 +96,6 @@ def analisar_historico_avancado(historico):
     if not achados:
         return None, "Nenhum padrão repetido detectado."
 
-    # Filtrar achados que não estão dentro de manipulação (evitar falsos positivos)
     achados_filtrados = []
     for pad in achados:
         overlap = False
@@ -120,14 +109,12 @@ def analisar_historico_avancado(historico):
     if not achados_filtrados:
         return None, "Padrões encontrados, mas todos suspeitos de manipulação."
 
-    # Ranking por tamanho (maior tamanho = maior peso)
     melhor = max(achados_filtrados, key=lambda x: x['tamanho'])
     prox_jogada = prever_proxima(historico, melhor)
     if prox_jogada is None:
         return None, "Padrão encontrado, mas não foi possível prever próxima jogada (limite histórico)."
 
-    # Confiança baseada no tamanho do padrão
-    confianca = min(1.0, melhor['tamanho'] / 9)  # Normaliza entre 0 e 1
+    confianca = min(1.0, melhor['tamanho'] / 9)
 
     texto = (f"Padrão detectado: sequência de tamanho {melhor['tamanho']} "
              f"repetida nas posições {melhor['pos1']+1} e {melhor['pos2']+1}.\n"
@@ -147,9 +134,13 @@ def main():
     st.write("Informe o histórico (máximo 27) na ordem correta: mais recente à esquerda.")
     st.write("Use os emojis 🔴 🔵 🟡 separados por espaço.")
 
-    raw = st.text_input("Histórico:", "")
+    raw = st.text_input("Histórico:")
 
-    if raw:
+    if st.button("Analisar"):
+        if not raw.strip():
+            st.warning("Informe o histórico antes de analisar.")
+            return
+
         historico = raw.strip().split()
         if len(historico) < 9:
             st.warning("Histórico deve conter pelo menos 9 resultados.")
