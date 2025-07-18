@@ -1,146 +1,56 @@
-import streamlit as st
-from collections import defaultdict
+import streamlit as st from collections import deque, Counter
 
-# ---------- Normalização e comparação ----------
-def normalizar_seq(seq):
-    mapa = {'🔴': 0, '🔵': 1, '🟡': 2}
-    normal = [mapa[c] for c in seq]
-    inverso = [1 - x if x in (0,1) else x for x in normal]
-    return normal, inverso
+Mapeamento de emojis para letras para facilitar processamento
 
-def seq_igual(seq1, seq2):
-    n1, i1 = normalizar_seq(seq1)
-    n2, i2 = normalizar_seq(seq2)
-    return n1 == n2 or n1 == i2
+COR_MAP = {"🔴": "R", "🔵": "B", "🟡": "Y"} COR_REV = {v: k for k, v in COR_MAP.items()}
 
-# ---------- Buscar subpadrões ----------
-def buscar_subpadroes(historico, min_len=3, max_len=9):
-    n = len(historico)
-    achados = []
+st.set_page_config(page_title="FS Última Ficha AI", layout="wide") st.title("🔮 FS Última Ficha AI – Análise Inteligente Automática")
 
-    for tamanho in range(max_len, min_len - 1, -1):
-        if tamanho > n:
-            continue
-        subseqs = [(i, historico[i:i+tamanho]) for i in range(n - tamanho + 1)]
-        grupos = defaultdict(list)
+Histórico (recente à esquerda)
 
-        for pos, seq in subseqs:
-            key, _ = normalizar_seq(seq)
-            grupos[tuple(key)].append((pos, seq))
+historico = st.session_state.get("historico", deque(maxlen=27))
 
-        for key, ocor in grupos.items():
-            if len(ocor) >= 2:
-                for i in range(len(ocor)):
-                    for j in range(i + 1, len(ocor)):
-                        achados.append({
-                            'tamanho': tamanho,
-                            'pos1': ocor[i][0],
-                            'seq1': ocor[i][1],
-                            'pos2': ocor[j][0],
-                            'seq2': ocor[j][1],
-                            'key': key
-                        })
-        if achados:
-            break
-    return achados
+col1, col2 = st.columns(2)
 
-# ---------- Prever próxima jogada ----------
-def prever_proxima(historico, padrao):
-    pos2 = padrao['pos2']
-    tamanho = padrao['tamanho']
-    historico_len = len(historico)
+with col1: st.subheader("Inserir Resultado (⬅️ Recente ➝ Antigo)") col_b1, col_b2, col_b3 = st.columns(3) if col_b1.button("🔴 Red"): historico.appendleft("R") if col_b2.button("🔵 Blue"): historico.appendleft("B") if col_b3.button("🟡 Yellow"): historico.appendleft("Y")
 
-    prox_pos = pos2 + tamanho
-    if prox_pos >= historico_len:
-        return None
+with col2: if st.button("↩️ Desfazer Última Entrada") and historico: historico.popleft()
 
-    jogada_apos = historico[prox_pos]
-    n1, i1 = normalizar_seq(padrao['seq1'])
-    n2, i2 = normalizar_seq(padrao['seq2'])
+st.session_state["historico"] = historico
 
-    if n1 == i2:
-        # Padrão foi reescrito com inversão
-        if jogada_apos == '🔴': jogada_apos = '🔵'
-        elif jogada_apos == '🔵': jogada_apos = '🔴'
+Mostrar histórico na tela com emojis
 
-    return jogada_apos
+st.subheader("Histórico (⬅️ Recente | Antigo ➝)") linha_emojis = [COR_REV[c] for c in historico] st.write(" ".join(linha_emojis))
 
-# ---------- Detectar manipulação ----------
-def detectar_manipulacao(historico):
-    suspeitas = []
-    n = len(historico)
-    for i in range(n - 4):
-        bloco = historico[i:i+4]
-        if bloco == ['🔴', '🔴', '🟡', '🔵']:
-            suspeitas.append(i)
-    return suspeitas
+Lógica inteligente de previsão
 
-# ---------- Análise geral ----------
-def analisar_historico_avancado(historico):
-    achados = buscar_subpadroes(historico)
-    manipulos = detectar_manipulacao(historico)
+sugestao = "" confiança = ""
 
-    if not achados:
-        return None, "Nenhum padrão relevante foi identificado."
+if len(historico) >= 9: janela = list(historico)[:9]  # Pega as 9 jogadas mais recentes sequencia = "".join(janela)
 
-    # Remover padrões que cruzam blocos suspeitos
-    achados_filtrados = []
-    for pad in achados:
-        cruzado = any(
-            pad['pos1'] <= m+3 <= pad['pos1']+pad['tamanho'] or 
-            pad['pos2'] <= m+3 <= pad['pos2']+pad['tamanho']
-            for m in manipulos
-        )
-        if not cruzado:
-            achados_filtrados.append(pad)
+# Procurar se essa sequência já ocorreu antes no restante do histórico
+restante = list(historico)[9:]
+ocorrencias = []
 
-    if not achados_filtrados:
-        return None, "Padrões detectados, mas todos com possíveis manipulações."
+for i in range(len(restante) - 9):
+    bloco = restante[i:i+9]
+    if bloco == janela:
+        if i > 0:
+            prox = restante[i-1]  # entrada que veio depois da repetição anterior
+            ocorrencias.append(prox)
 
-    melhor = max(achados_filtrados, key=lambda x: x['tamanho'])
-    prox = prever_proxima(historico, melhor)
+if ocorrencias:
+    contagem = Counter(ocorrencias)
+    mais_comum = contagem.most_common(1)[0][0]
+    sugestao = COR_REV[mais_comum]
+    confiança = f"{(contagem[mais_comum] / len(ocorrencias)) * 100:.1f}% de confiança"
+else:
+    sugestao = "⚠️ Nenhum padrão detectado ainda."
+    confiança = "Adicione mais resultados."
 
-    if prox is None:
-        return None, "Não foi possível prever a próxima jogada."
+else: sugestao = "⚠️ Aguarde pelo menos 9 resultados." confiança = "Insira mais dados."
 
-    confianca = min(1.0, melhor['tamanho'] / 9)
+Mostrar sugestão
 
-    explicacao = (f"🔍 Padrão detectado de tamanho {melhor['tamanho']} "
-                  f"repetido nas posições {melhor['pos1']+1} e {melhor['pos2']+1']}.\n"
-                  f"💡 Previsão baseada em repetição estruturada (com possível inversão).\n"
-                  f"📊 Confiança estimada: {confianca*100:.1f}%.")
+st.subheader("📈 Sugestão da Próxima Entrada") st.markdown(f"Próxima Jogada Recomendada: {sugestao}") st.markdown(f"Confiança: {confiança}")
 
-    if manipulos:
-        explicacao += f"\n⚠️ {len(manipulos)} possíveis padrões de manipulação detectados."
-
-    return prox, explicacao
-
-# ---------- Streamlit Interface Automática ----------
-def main():
-    st.set_page_config(page_title="FS Última Ficha PRO", layout="centered")
-    st.title("🧠 FS Última Ficha PRO – AutoDetect v4.1")
-    st.markdown("Digite o histórico do painel da **esquerda para direita** (mais recente à esquerda). Use 🔴 🔵 🟡 com espaços.")
-
-    raw = st.text_input("Histórico (mínimo 9, máximo 27):", placeholder="Ex: 🔴 🔴 🔵 🔴 🟡 🔵 🔵 🔴...")
-
-    if raw.strip():
-        historico = raw.strip().split()
-        if len(historico) < 9:
-            st.warning("Insira pelo menos 9 resultados para iniciar a previsão.")
-            return
-        if len(historico) > 27:
-            historico = historico[:27]
-
-        st.markdown("### 🧾 Histórico lido:")
-        st.write(" ".join(historico))
-
-        jogada, justificativa = analisar_historico_avancado(historico)
-
-        if jogada:
-            st.markdown(f"## 🎯 Próxima jogada sugerida: **{jogada}**")
-            st.info(justificativa)
-        else:
-            st.info(justificativa)
-
-if __name__ == "__main__":
-    main()
