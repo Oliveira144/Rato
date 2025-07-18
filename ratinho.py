@@ -1,27 +1,21 @@
 import streamlit as st
-from collections import Counter
+from collections import Counter, defaultdict
 
-# Função para normalizar uma sequência trocando 🔴 e 🔵 para um padrão genérico,
-# mantendo empates 🟡 fixos. Isso ajuda a identificar padrões que são a mesma estrutura
+# ---------- Normalização e comparação ----------
+
 def normalizar_seq(seq):
-    # Mapear cores para 0 e 1 (ex: 🔴=0, 🔵=1), empates fixos (2)
-    # para poder comparar inversões
     mapping = {'🔴': 0, '🔵': 1, '🟡': 2}
     normal = [mapping[c] for c in seq]
-
-    # Também criar inverso (troca 0<->1, 2 fica igual)
     inverso = [1 - x if x in (0,1) else x for x in normal]
-
     return normal, inverso
 
-# Função para verificar se duas sequências são iguais
-# considerando normal e inverso
 def seq_igual(seq1, seq2):
     n1, i1 = normalizar_seq(seq1)
     n2, i2 = normalizar_seq(seq2)
     return n1 == n2 or n1 == i2
 
-# Função para buscar subpadrões repetidos no histórico
+# ---------- Busca de subpadrões com estatística ----------
+
 def buscar_subpadroes(historico, min_len=3, max_len=9):
     n = len(historico)
     achados = []
@@ -29,55 +23,56 @@ def buscar_subpadroes(historico, min_len=3, max_len=9):
     for tamanho in range(max_len, min_len-1, -1):
         if tamanho > n:
             continue
-        # Criar todas as subsequências desse tamanho
         subseqs = []
         for start in range(n - tamanho +1):
             subseq = historico[start:start+tamanho]
             subseqs.append( (start, subseq) )
-        # Comparar todas entre si para ver repetições
-        for i in range(len(subseqs)):
-            start_i, seq_i = subseqs[i]
-            for j in range(i+1, len(subseqs)):
-                start_j, seq_j = subseqs[j]
-                if seq_igual(seq_i, seq_j):
-                    achados.append({
-                        'tamanho': tamanho,
-                        'pos1': start_i,
-                        'seq1': seq_i,
-                        'pos2': start_j,
-                        'seq2': seq_j
-                    })
+
+        # Dicionário para contar repetições normalizadas
+        rep_contagem = defaultdict(list)
+
+        for idx, (start_pos, seq) in enumerate(subseqs):
+            nseq, _ = normalizar_seq(seq)
+            key = tuple(nseq)
+            rep_contagem[key].append((start_pos, seq))
+
+        # Agora verificar quais chaves tem pelo menos 2 ocorrências para achar repetições
+        for key, ocor in rep_contagem.items():
+            if len(ocor) >= 2:
+                # Para cada par de ocorrências, armazenar no achados
+                for i in range(len(ocor)):
+                    for j in range(i+1, len(ocor)):
+                        achados.append({
+                            'tamanho': tamanho,
+                            'pos1': ocor[i][0],
+                            'seq1': ocor[i][1],
+                            'pos2': ocor[j][0],
+                            'seq2': ocor[j][1],
+                            'key': key
+                        })
         if achados:
             break
+
     return achados
 
-# Função para prever próxima jogada com base no padrão encontrado
+# ---------- Previsão da próxima jogada com análise ----------
+
 def prever_proxima(historico, padrao):
-    """
-    padrao = dict com keys: tamanho, pos1, seq1, pos2, seq2
-    A ideia é: 
-    - A sequência mais recente é a seq1 em pos1
-    - Ver a jogada seguinte após seq2 em pos2 (se existir)
-    """
     pos2 = padrao['pos2']
     tamanho = padrao['tamanho']
     historico_len = len(historico)
 
     prox_pos = pos2 + tamanho
     if prox_pos >= historico_len:
-        return None  # Não há próxima jogada conhecida
+        return None
 
     jogada_apos = historico[prox_pos]
-
-    # Agora é importante saber se a sequência seq1 foi invertida em relação a seq2,
-    # para inverter a jogada_apos também.
 
     n1, i1 = normalizar_seq(padrao['seq1'])
     n2, i2 = normalizar_seq(padrao['seq2'])
 
-    # Se seq1 é inverso de seq2, inverter jogada_apos
     if n1 == i2:
-        # inverter jogada_apos: 🔴 <-> 🔵, 🟡 fica igual
+        # inverter jogada_apos
         if jogada_apos == '🔴':
             jogada_apos = '🔵'
         elif jogada_apos == '🔵':
@@ -85,28 +80,69 @@ def prever_proxima(historico, padrao):
 
     return jogada_apos
 
-# Função principal que roda análise e previsão
-def analisar_historico(historico):
+# ---------- Sistema Anti-Manipulação ----------
+
+def detectar_manipulacao(historico):
+    """
+    Detecta ciclos típicos de manipulação:
+    Exemplo: sequências 🔴🔴🟡🔵 repetidas ou padrões com empates travando viradas.
+    """
+    manipulos = []
+    n = len(historico)
+    for i in range(n-4):
+        seq = historico[i:i+4]
+        # Detecta padrão bloqueio vermelho
+        if seq == ['🔴','🔴','🟡','🔵']:
+            manipulos.append(i)
+        # Pode adicionar outras regras conforme necessidade
+    return manipulos
+
+# ---------- Análise final com ranking ----------
+
+def analisar_historico_avancado(historico):
     achados = buscar_subpadroes(historico)
+    manipulos = detectar_manipulacao(historico)
+
     if not achados:
         return None, "Nenhum padrão repetido detectado."
 
-    # Pegar o melhor padrão (maior tamanho)
-    melhor = max(achados, key=lambda x: x['tamanho'])
-    prox_jogada = prever_proxima(historico, melhor)
+    # Filtrar achados que não estão dentro de manipulação (evitar falsos positivos)
+    achados_filtrados = []
+    for pad in achados:
+        overlap = False
+        for m in manipulos:
+            if (pad['pos1'] <= m+3 and pad['pos1'] >= m) or (pad['pos2'] <= m+3 and pad['pos2'] >= m):
+                overlap = True
+                break
+        if not overlap:
+            achados_filtrados.append(pad)
 
+    if not achados_filtrados:
+        return None, "Padrões encontrados, mas todos suspeitos de manipulação."
+
+    # Ranking por tamanho (maior tamanho = maior peso)
+    melhor = max(achados_filtrados, key=lambda x: x['tamanho'])
+    prox_jogada = prever_proxima(historico, melhor)
     if prox_jogada is None:
         return None, "Padrão encontrado, mas não foi possível prever próxima jogada (limite histórico)."
 
+    # Confiança baseada no tamanho do padrão
+    confianca = min(1.0, melhor['tamanho'] / 9)  # Normaliza entre 0 e 1
+
     texto = (f"Padrão detectado: sequência de tamanho {melhor['tamanho']} "
              f"repetida nas posições {melhor['pos1']+1} e {melhor['pos2']+1}.\n"
-             f"Sugestão baseada na repetição estrutural com possível inversão.")
+             f"Sugestão baseada na repetição estrutural com possível inversão.\n"
+             f"Confiança estimada: {confianca*100:.1f}%.\n")
+
+    if manipulos:
+        texto += f"Atenção: detectadas possíveis manipulações em {len(manipulos)} blocos."
+
     return prox_jogada, texto
 
-# ---------------- STREAMLIT ------------------
+# ---------- Interface Streamlit ----------
 
 def main():
-    st.title("FS Pattern Auto-ID & Prediction")
+    st.title("FS Última Ficha v4.1 - Análise Avançada com Anti-Manipulação e Confiança")
 
     st.write("Informe o histórico (máximo 27) na ordem correta: mais recente à esquerda.")
     st.write("Use os emojis 🔴 🔵 🟡 separados por espaço.")
@@ -124,7 +160,7 @@ def main():
         st.write("### Histórico (mais recente → mais antigo):")
         st.write(" ".join(historico))
 
-        jogada, justificativa = analisar_historico(historico)
+        jogada, justificativa = analisar_historico_avancado(historico)
         if jogada is None:
             st.info(justificativa)
         else:
