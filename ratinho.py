@@ -1,56 +1,71 @@
 import streamlit as st from collections import deque, Counter
 
-Mapeamento de emojis para letras para facilitar processamento
+st.set_page_config(page_title="FS Auto Predictor", layout="wide")
 
-COR_MAP = {"🔴": "R", "🔵": "B", "🟡": "Y"} COR_REV = {v: k for k, v in COR_MAP.items()}
+st.title("📊 Football Studio - Auto Predictor")
 
-st.set_page_config(page_title="FS Última Ficha AI", layout="wide") st.title("🔮 FS Última Ficha AI – Análise Inteligente Automática")
+Histórico de resultados (deque com tamanho máximo de 27)
 
-Histórico (recente à esquerda)
+history = st.session_state.get("history", deque(maxlen=27))
 
-historico = st.session_state.get("historico", deque(maxlen=27))
+Função para adicionar novo resultado
 
-col1, col2 = st.columns(2)
+def add_result(color): history.appendleft(color) st.session_state.history = history
 
-with col1: st.subheader("Inserir Resultado (⬅️ Recente ➝ Antigo)") col_b1, col_b2, col_b3 = st.columns(3) if col_b1.button("🔴 Red"): historico.appendleft("R") if col_b2.button("🔵 Blue"): historico.appendleft("B") if col_b3.button("🟡 Yellow"): historico.appendleft("Y")
+Exibir os resultados da direita (mais antigo) para a esquerda (mais recente)
 
-with col2: if st.button("↩️ Desfazer Última Entrada") and historico: historico.popleft()
+st.markdown("### Histórico (mais recente à esquerda):") if history: st.markdown( """<div style='display: flex; gap: 5px;'>""" + """"".join([f"<div style='padding:10px; border-radius:5px; background:{'red' if r=='🔴' else 'blue' if r=='🔵' else 'gold'};'>{r}</div>" for r in history]) + "</div>"", unsafe_allow_html=True )
 
-st.session_state["historico"] = historico
+Botões para inserir novo resultado
 
-Mostrar histórico na tela com emojis
+col1, col2, col3 = st.columns(3) with col1: if st.button("🔴 Vermelho"): add_result("🔴") with col2: if st.button("🔵 Azul"): add_result("🔵") with col3: if st.button("🟡 Empate"): add_result("🟡")
 
-st.subheader("Histórico (⬅️ Recente | Antigo ➝)") linha_emojis = [COR_REV[c] for c in historico] st.write(" ".join(linha_emojis))
+Análise automática de padrão
 
-Lógica inteligente de previsão
+suggestion = "" confidence = "" if len(history) >= 9: bloco = list(history)[:9]
 
-sugestao = "" confiança = ""
+# Exemplo simples: detectar 5 ou mais azuis consecutivos
+azul_consec = 0
+for cor in bloco:
+    if cor == "🔵":
+        azul_consec += 1
+    else:
+        azul_consec = 0
+    if azul_consec >= 5:
+        suggestion = "🔴 (quebra provável de sequência azul)"
+        confidence = "Alta"
+        break
 
-if len(historico) >= 9: janela = list(historico)[:9]  # Pega as 9 jogadas mais recentes sequencia = "".join(janela)
+# Se não pegou sequência azul, verificar sequência vermelha
+if not suggestion:
+    red_consec = 0
+    for cor in bloco:
+        if cor == "🔴":
+            red_consec += 1
+        else:
+            red_consec = 0
+        if red_consec >= 5:
+            suggestion = "🔵 (quebra provável de sequência vermelha)"
+            confidence = "Alta"
+            break
 
-# Procurar se essa sequência já ocorreu antes no restante do histórico
-restante = list(historico)[9:]
-ocorrencias = []
-
-for i in range(len(restante) - 9):
-    bloco = restante[i:i+9]
-    if bloco == janela:
-        if i > 0:
-            prox = restante[i-1]  # entrada que veio depois da repetição anterior
-            ocorrencias.append(prox)
-
-if ocorrencias:
-    contagem = Counter(ocorrencias)
-    mais_comum = contagem.most_common(1)[0][0]
-    sugestao = COR_REV[mais_comum]
-    confiança = f"{(contagem[mais_comum] / len(ocorrencias)) * 100:.1f}% de confiança"
-else:
-    sugestao = "⚠️ Nenhum padrão detectado ainda."
-    confiança = "Adicione mais resultados."
-
-else: sugestao = "⚠️ Aguarde pelo menos 9 resultados." confiança = "Insira mais dados."
+# Se ainda não detectou nada
+if not suggestion:
+    mais_freq = Counter(bloco).most_common(1)[0][0]
+    if mais_freq == "🔵":
+        suggestion = "🔵 (continuidade dominante)"
+        confidence = "Média"
+    elif mais_freq == "🔴":
+        suggestion = "🔴 (continuidade dominante)"
+        confidence = "Média"
+    else:
+        suggestion = "🔴 ou 🔵 (após empate, instável)"
+        confidence = "Baixa"
 
 Mostrar sugestão
 
-st.subheader("📈 Sugestão da Próxima Entrada") st.markdown(f"Próxima Jogada Recomendada: {sugestao}") st.markdown(f"Confiança: {confiança}")
+if suggestion: st.markdown(""" ### 🎯 Sugestão de Entrada: Jogada Sugerida: {sugestao}
+
+**Confiabilidade:** {conf}
+""".format(sugestao=suggestion, conf=confidence))
 
